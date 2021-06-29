@@ -13,6 +13,17 @@ public class RayTracingMaster : MonoBehaviour
     private uint _currentSample = 0;
     private Material _addMaterial;
     public Light DirectionalLight;
+    public Vector2 SphereRadius = new Vector2(3.0f, 8.0f);
+    public uint SpheresMax = 100;
+    public float SpherePlacementRadius = 100.0f;
+    private ComputeBuffer _sphereBuffer;
+
+    struct Sphere {
+        public Vector3 position;
+        public float radius;
+        public Vector3 albedo;
+        public Vector3 specular;
+    };
 
     private void Awake() {
         _camera = GetComponent<Camera>();
@@ -32,6 +43,61 @@ public class RayTracingMaster : MonoBehaviour
         }
     }
 
+    //set up the scene on enable
+    private void OnEnable() {
+        _currentSample = 0;
+        SetUpScene();
+    }
+
+    //release the buffer on disable
+    private void OnDisable() {
+        if(_sphereBuffer != null) {
+            _sphereBuffer.Release();
+        }
+    }
+
+    //initialize the scene of spheres
+    private void SetUpScene() {
+        List<Sphere> spheres = new List<Sphere>();
+
+        //Add a number of random spheres
+        for(int i = 0; i < SpheresMax; i++) {
+            Sphere sphere = new Sphere();
+
+            //Radius and radius
+            sphere.radius = SphereRadius.x + Random.value * (SphereRadius.y - SphereRadius.x);
+            Vector2 randomPos = Random.insideUnitCircle * SpherePlacementRadius;
+            sphere.position = new Vector3(randomPos.x, sphere.radius, randomPos.y);
+
+            //Reject spheres that are intersecting others
+            foreach(Sphere other in spheres) {
+                float minDist = sphere.radius + other.radius;
+                if(Vector3.SqrMagnitude(sphere.position - other.position) < minDist * minDist) {
+                    goto SkipSphere;
+                }
+            }
+
+            //Albedo and specular color
+            Color color = Random.ColorHSV();
+            bool metal = Random.value < 0.5f;
+            sphere.albedo = metal ? Vector3.zero : new Vector3(color.r, color.g, color.b);
+            sphere.specular = metal ? new Vector3(color.r, color.g, color.b) : Vector3.one * 0.04f;
+            
+            //Add the sphere to the list
+            spheres.Add(sphere);
+
+        SkipSphere:
+            continue;
+        }   
+
+        //Assign to compute buffer
+        //The 40 when creating the new compute buffer is the "stride" of the buffer, i.e the bute size of one sphere in memory.
+        //To calculate it, count the number of floats in the Sphere struct and multiply it by float's byte size (4bytes).
+        _sphereBuffer = new ComputeBuffer(spheres.Count, 40);
+        _sphereBuffer.SetData(spheres);
+
+    }
+
     private void SetShaderParameters() {
         RayTracingShader.SetMatrix("_CameraToWorld", _camera.cameraToWorldMatrix);
         RayTracingShader.SetMatrix("_CameraInverseProjection", _camera.projectionMatrix.inverse);
@@ -40,6 +106,8 @@ public class RayTracingMaster : MonoBehaviour
 
         Vector3 l = DirectionalLight.transform.forward;
         RayTracingShader.SetVector("_DirectionalLight", new Vector4(l.x, l.y, l.z, DirectionalLight.intensity));
+
+        RayTracingShader.SetBuffer(0, "_Spheres", _sphereBuffer);
     }
 
     //OnRenderImage function is automatically called by Unity whenever the camera has finished rendering
